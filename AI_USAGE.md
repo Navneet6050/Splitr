@@ -1,12 +1,20 @@
 # AI_USAGE.md: AI Tools & Correction Log
 
-This document lists the AI tools utilized during the Splitr migration project, key session prompts, and three concrete case studies where AI-generated structures required manual intervention and correction.
+This document lists the AI tools utilized during the development and implementation of the Splitr expense-splitting and CSV anomaly-detection assignment, key session prompts, and four concrete case studies where AI-generated code or architecture required manual intervention and correction.
 
 ---
 
-## 🛠️ 1. AI Tools Utilized
-* **Codex && Antigravity pair programmer (Google DeepMind)**: Used for repository parsing, database schema design, refactoring, batch database call optimizations, and automated build verification.
-* **`npx tsx` CLI tool**: Used to compile and execute ES-module database scripts programmatically to verify transaction pipelines.
+## 🛠️ 1. Tools Utilized
+
+### AI Tools
+* **Antigravity (Google DeepMind)**: Primary pair-programming AI used throughout the assignment for architecture design, database schema planning, server action implementation, CSV import pipeline design, anomaly detector authoring, and automated build verification.
+* **Codex**: Supplementary AI model used for inline code completion and refactoring suggestions during implementation.
+
+### Development Tools
+* **`npx tsx` CLI**: Compiled and executed ES-module TypeScript/JavaScript scripts directly against the Neon DB connection to verify transaction pipelines and schema integrity outside the Next.js runtime.
+* **Prisma CLI (`npx prisma db push`, `npx prisma studio`)**: Applied schema changes to the Neon PostgreSQL instance and inspected committed records visually during development.
+* **Next.js Dev Server (`npm run dev`)**: Provided hot-reload during implementation with server-side error output used to catch runtime crashes, transaction failures, and React hook regressions.
+* **Neon DB Console**: Used to inspect raw table contents, verify `ImportReport` JSONB payloads, and confirm `GroupMembership` temporal records after CSV commits.
 
 ---
 
@@ -40,3 +48,61 @@ This document lists the AI tools utilized during the Splitr migration project, k
   1. Refactored the staging loop to use Prisma's **`createManyAndReturn`** to stage rows in a single batch query.
   2. Pre-cached membership lookup checks and aggregated `GroupMembership` updates and `ExpenseSplit` records in memory, writing them to PostgreSQL at the end of the transaction via a single **`createMany`** call. This reduced remote WAN roundtrips from 170+ down to 3, speeding up transaction time to under 0.5s.
   3. Configured explicit transaction timeout overrides (`timeout: 60000` for commits) to ensure stable connection allocations under pool load.
+
+---
+
+### Case 4: AI Initially Suggested Direct CSV Insertion Instead of Staged Architecture
+* **What the AI generated**: When asked to design the CSV import pipeline, the initial AI proposal inserted rows directly into the `Expense` table inside a single transaction with inline validation — a `try/catch` per row with rollback on failure. There was no staging table, no anomaly review step, and no approval workflow.
+* **Why this violated assignment requirements**: The Spreetail assignment explicitly required: (a) detecting and logging anomalies before committing records, (b) an approval workflow where a human reviews each problem row, and (c) a generated import report documenting every detected issue and the action taken. Direct insertion would commit clean rows immediately while silently discarding problematic ones — producing no anomaly log, no review trail, and no report. This would have failed the audit-trail requirement entirely.
+* **How it was caught**: Reviewing the assignment specification against the AI's proposed code revealed that no `ImportAnomaly`, `AnomalyReview`, or `ImportReport` table was being populated. The UI had no review grid. The `commit()` function had no `approved` status gate.
+* **How we corrected it**:
+  1. Defined a full staging schema: `Import` → `ImportRow` → `ImportAnomaly` → `AnomalyReview` → `ImportReport` (five new Prisma models).
+  2. Replaced the single-pass insertion with a two-phase pipeline: `upload()` stages all rows and runs the anomaly detector in memory; `approve()` gates commit behind `blockingCount === 0`; `commit()` writes only to `Expense` and `Settlement` after all blocking anomalies are human-reviewed.
+  3. Added nine modular detector files under [lib/import/detectors/](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/) — one per anomaly domain — each returning structured `{ type, severity, message, suggestedAction, confidenceScore }` objects bulk-inserted into `ImportAnomaly`.
+  4. The final `commit()` transaction assembles a `summaryJson` report and persists it to `ImportReport`, satisfying the assignment's generated-report deliverable requirement.
+
+---
+
+## 💬 6. Additional Key Prompt: System Architecture and Application Design
+
+Before any implementation began, the following architectural planning prompt was used to define the high-level and low-level design of the application:
+
+> *"You are a Principal Software Architect designing a production-grade expense-splitting and financial ledger application called Splitr. The app must support: multi-user group expense tracking with multiple split modes (equal, percentage, exact, shares); multi-currency support with conversion to a base currency at write time; a CSV import pipeline that stages rows before committing them, detects anomalies (duplicates, membership violations, repayment rows, foreign currencies, name aliases, malformed dates, non-standard split types), and provides a human-approval workflow before any data reaches the ledger; temporal group membership windows that track when each member was active; a greedy pairwise balance simplification algorithm; and a persisted audit report for every import session.*
+>
+> *Design the following:*
+> *1. High-Level Design (HLD): System components, data flow, service boundaries, and external dependencies.*
+> *2. Low-Level Design (LLD): Database schema with all models, fields, indexes, and foreign key constraints. Anomaly detector architecture. Transaction boundaries and timeout strategy.*
+> *3. Import Pipeline Design: How CSV rows move from upload → staging → detection → review → approval → transformation → commit → report generation.*
+> *4. Scalability Planning: How this design scales from 5 users to 10,000 users. What breaks first and how to fix it.*
+> *5. Decision Log: For each major design decision, document the options considered, the chosen option, the tradeoffs, and the revisit criteria.*
+>
+> *Do not generate code yet. Output a structured architecture document first."*
+
+**Why this prompt mattered**: This planning prompt forced the AI to produce an [ARCHITECTURE.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/ARCHITECTURE.md), [DATABASE_DESIGN.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/DATABASE_DESIGN.md), and an initial [DECISIONS.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/DECISIONS.md) before a single line of application code was written. This prevented the Case 4 direct-insertion error from reaching production and ensured the staging pipeline was part of the design from the outset.
+
+---
+
+## ✅ 7. AI Output Verification Process
+
+Every significant piece of AI-generated code was validated through the following process before being considered complete:
+
+### Step 1: Build Verification
+* `npm run build` was executed after every significant code change to catch Next.js compilation errors, SSR import boundary violations, and TypeScript type mismatches surfaced by the ESLint configuration.
+* ESM import compatibility across server action files and client components was verified by confirming zero `SyntaxError` or `ReferenceError` outputs during the build.
+
+### Step 2: Schema Review Against Prisma
+* Every Prisma model addition or field change was reviewed in [schema.prisma](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/prisma/schema.prisma) for correctness before `npx prisma db push` was run against the Neon DB instance.
+* Field types, nullable vs. required constraints, cascade delete rules, and unique index definitions were manually compared against the intended data model before application.
+* `npx prisma studio` was used after each push to visually confirm that tables were created with the correct columns and that foreign key references resolved correctly.
+
+### Step 3: Transaction Pipeline Testing
+* The `npx tsx` CLI tool was used to run standalone scripts against the live Neon DB connection, testing `createManyAndReturn` batch inserts, anomaly bulk-insertion via `createMany`, and the commit transaction's in-memory membership accumulator — independent of the Next.js runtime.
+* These scripts validated that the 30-second staging timeout and 60-second commit timeout were sufficient for the 12-row CSV dataset and confirmed the round-trip count reduction (170+ individual queries → 3 batched operations).
+
+### Step 4: Runtime Verification in Browser
+* Every import pipeline stage (upload, review grid render, anomaly badge display, individual anomaly resolution, approval gate, commit, report render) was exercised against the `goa_trip_expenses.csv` dataset in the local dev server.
+* The browser's network tab and the Next.js server console were monitored during each operation to catch unexpected query cascades, authentication failures, and React hook regressions.
+* The committed `ImportReport` record was retrieved from Neon DB via `npx prisma studio` and compared against the on-screen report to confirm consistency.
+
+### Step 5: Documentation Cross-Check
+* After implementation, all five required deliverables ([README.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/README.md), [SCOPE.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/SCOPE.md), [DECISIONS.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/DECISIONS.md), [IMPORT_REPORT.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/IMPORT_REPORT.md), [AI_USAGE.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/AI_USAGE.md)) were reviewed against the assignment specification checklist to confirm that no requirement was missed and that no AI-generated content made claims that were not backed by the actual implementation.
