@@ -66,7 +66,7 @@ sequenceDiagram
     actor User as "User Agent"
     participant SV as "Client Import Page"
     participant SA as "Imports Server Action"
-    database DB as "PostgreSQL (Neon)"
+    participant DB as "PostgreSQL (Neon)"
 
     User->>SV: Upload CSV File
     SV->>SA: create({ groupId, csvText, fileName })
