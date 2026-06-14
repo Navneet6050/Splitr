@@ -1,6 +1,6 @@
 # Splitr: Relational Expense Sharing & Anomaly-Detection Engine
 
-Splitr is a high-performance bill-splitting and financial ledger application built with **Next.js (App Router)**, **Prisma ORM**, and **PostgreSQL (Neon DB)**. The platform features dynamic multi-currency calculations, an advanced CSV import validation pipeline, serverless background jobs, and a unique **API Proxy Bridge** that facilitates server action dispatching.
+Splitr is a high-performance bill-splitting and financial ledger application built with **Next.js (App Router)**, **Prisma ORM**, and **PostgreSQL (Neon DB)**, developed in pair programming with **Antigravity AI (Google DeepMind)**. The platform features dynamic multi-currency calculations, an advanced CSV import validation pipeline, serverless background jobs, and a unique **API Proxy Bridge** that facilitates server action dispatching.
 
 ---
 
