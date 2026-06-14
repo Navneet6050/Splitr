@@ -1,23 +1,26 @@
-/* eslint-disable */
-/**
- * Generated `api` utility.
- *
- * THIS CODE IS AUTOMATICALLY GENERATED.
- *
- * To regenerate, run `npx convex dev`.
- * @module
- */
+// Mocked api utility to replace Convex generated code.
+// Intercepts any property path access and returns its string key path.
+const makeProxy = (path = []) => {
+  return new Proxy(
+    Object.assign(() => {}, { path }),
+    {
+      get(target, prop) {
+        if (prop === "name" || prop === "_path") {
+          return path.join(":");
+        }
+        if (prop === "toString" || prop === Symbol.toPrimitive) {
+          return () => path.join(":");
+        }
+        // Support some default function properties if checked
+        if (typeof prop === "symbol") {
+          return undefined;
+        }
+        return makeProxy([...path, prop]);
+      }
+    }
+  );
+};
 
-import { anyApi, componentsGeneric } from "convex/server";
-
-/**
- * A utility for referencing Convex functions in your app's API.
- *
- * Usage:
- * ```js
- * const myFunctionReference = api.myModule.myFunction;
- * ```
- */
-export const api = anyApi;
-export const internal = anyApi;
-export const components = componentsGeneric();
+export const api = makeProxy([]);
+export const internal = api;
+export const components = {};

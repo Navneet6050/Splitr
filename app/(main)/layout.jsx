@@ -1,6 +1,6 @@
 "use client";
 
-import { Authenticated } from "convex/react";
+import { Authenticated } from "@/hooks/use-convex-query";
 import React from "react";
 
 const MainLayout = ({ children }) => {

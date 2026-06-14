@@ -1,54 +1,81 @@
-import { useQuery, useMutation } from "convex/react";
+"use client";
+
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
+import { useUser, SignedIn, SignedOut } from "@clerk/nextjs";
 
-export const useConvexQuery = (query, ...args) => {
-  const result = useQuery(query, ...args);
+// Exporting Authenticated and Unauthenticated wrappers as equivalents to Convex Client
+export const Authenticated = SignedIn;
+export const Unauthenticated = SignedOut;
+
+// Dynamic bridge to execute server actions
+export const useConvexQuery = (queryRef, args) => {
   const [data, setData] = useState(undefined);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { isLoaded, isSignedIn } = useUser();
 
-  // Use effect to handle the state changes based on the query result
+  // Construct standard query name string
+  const queryName = typeof queryRef === "string" ? queryRef : queryRef?._path || String(queryRef);
+
   useEffect(() => {
-    if (result === undefined) {
+    if (!isLoaded) return;
+    if (queryRef === "skip") {
+      setIsLoading(false);
+      setData(undefined);
+      return;
+    }
+
+    let isMounted = true;
+    async function fetchData() {
       setIsLoading(true);
-    } else {
       try {
-        setData(result);
-        setError(null);
+        const { executeQuery } = await import("@/lib/api-bridge");
+        const res = await executeQuery(queryName, args);
+        if (isMounted) {
+          setData(res);
+          setError(null);
+        }
       } catch (err) {
-        setError(err);
-        toast.error(err.message);
+        if (isMounted) {
+          setError(err);
+          toast.error(err.message || "Failed to fetch data");
+        }
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     }
-  }, [result]);
 
-  return {
-    data,
-    isLoading,
-    error,
-  };
+    fetchData();
+    return () => {
+      isMounted = false;
+    };
+  }, [isLoaded, isSignedIn, queryName, JSON.stringify(args)]);
+
+  return { data, isLoading, error };
 };
 
-export const useConvexMutation = (mutation) => {
-  const mutationFn = useMutation(mutation);
+export const useConvexMutation = (mutationRef) => {
   const [data, setData] = useState(undefined);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const mutate = async (...args) => {
+  const mutationName = typeof mutationRef === "string" ? mutationRef : mutationRef?._path || String(mutationRef);
+
+  const mutate = async (args) => {
     setIsLoading(true);
     setError(null);
 
     try {
-      const response = await mutationFn(...args);
+      const { executeMutation } = await import("@/lib/api-bridge");
+      const response = await executeMutation(mutationName, args);
       setData(response);
       return response;
     } catch (err) {
       setError(err);
-      toast.error(err.message);
+      toast.error(err.message || "Mutation failed");
       throw err;
     } finally {
       setIsLoading(false);
@@ -56,4 +83,15 @@ export const useConvexMutation = (mutation) => {
   };
 
   return { mutate, data, isLoading, error };
+};
+
+// Aliases for useQuery/useMutation used directly in some files
+export const useQuery = (queryRef, args) => {
+  const { data } = useConvexQuery(queryRef, args);
+  return data;
+};
+
+export const useMutation = (mutationRef) => {
+  const { mutate } = useConvexMutation(mutationRef);
+  return mutate;
 };

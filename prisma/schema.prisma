@@ -1,0 +1,337 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model User {
+  id              String   @id @default(uuid())
+  name            String
+  email           String?  @unique
+  tokenIdentifier String   @unique
+  imageUrl        String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  expensesPaid      Expense[]         @relation("PaidBy")
+  expensesCreated   Expense[]         @relation("CreatedBy")
+  splits            ExpenseSplit[]
+  settlementsPaid   Settlement[]      @relation("PaidBy")
+  settlementsReceived Settlement[]    @relation("ReceivedBy")
+  settlementsCreated Settlement[]     @relation("CreatedBy")
+  groupMemberships  GroupMembership[] @relation("UserMemberships")
+  groupsCreated     Group[]           @relation("CreatedBy")
+  uploadedImports   Import[]
+  anomalyReviews    AnomalyReview[]
+  aliasesCreated    Alias[]           @relation("CreatedBy")
+  aliases           Alias[]           @relation("UserAlias")
+  currencyRatesCreated CurrencyRate[]
+  importReports     ImportReport[]
+}
+
+model Group {
+  id              String   @id @default(uuid())
+  name            String
+  description     String?
+  createdByUserId String
+  members         Json     // Embedded array of { userId, role, joinedAt } for compatibility
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  createdByUser   User              @relation("CreatedBy", fields: [createdByUserId], references: [id])
+  memberships     GroupMembership[]
+  expenses        Expense[]
+  settlements     Settlement[]
+  imports         Import[]
+  importRows      ImportRow[]
+  aliases         Alias[]
+  importReports   ImportReport[]
+}
+
+model Expense {
+  id                String   @id @default(uuid())
+  description       String
+  amount            Float
+  originalAmount    Float?
+  originalCurrency  String?
+  exchangeRate      Float?
+  convertedAmount   Float?
+  convertedCurrency String?
+  currencyRateId    String?
+  sourceImportId    String?
+  sourceImportRowId String?
+  category          String?
+  date              DateTime // timestamp mapping
+  paidByUserId      String
+  splitType         String   // "equal", "percentage", "exact", "unequal", "share"
+  splits            Json     // Embedded array of { userId, amount, paid } for compatibility
+  groupId           String?
+  createdByUserId   String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // Relations
+  paidByUser        User          @relation("PaidBy", fields: [paidByUserId], references: [id])
+  createdByUser     User          @relation("CreatedBy", fields: [createdByUserId], references: [id])
+  group             Group?        @relation(fields: [groupId], references: [id])
+  currencyRate      CurrencyRate? @relation(fields: [currencyRateId], references: [id])
+  sourceImport      Import?       @relation(fields: [sourceImportId], references: [id])
+  sourceImportRow   ImportRow?    @relation(fields: [sourceImportRowId], references: [id])
+
+  expenseSplits     ExpenseSplit[]
+  importRowsCreated ImportRow[]   @relation("CreatedExpense")
+
+  @@index([groupId])
+  @@index([paidByUserId, groupId])
+  @@index([date])
+  @@index([groupId, date])
+  @@index([sourceImportRowId])
+}
+
+model ExpenseSplit {
+  id                String   @id @default(uuid())
+  expenseId         String
+  userId            String
+  amount            Float
+  splitType         String
+  percentage        Float?
+  shares            Float?
+  paid              Boolean
+  sourceImportRowId String?
+  createdAt         DateTime @default(now())
+
+  // Relations
+  expense           Expense   @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  user              User      @relation(fields: [userId], references: [id])
+  sourceImportRow   ImportRow? @relation(fields: [sourceImportRowId], references: [id])
+
+  @@index([expenseId])
+  @@index([userId])
+  @@index([userId, expenseId])
+}
+
+model Settlement {
+  id                 String   @id @default(uuid())
+  amount             Float
+  originalAmount     Float?
+  originalCurrency   String?
+  exchangeRate       Float?
+  convertedAmount    Float?
+  convertedCurrency  String?
+  sourceImportId     String?
+  sourceImportRowId  String?
+  note               String?
+  date               DateTime
+  paidByUserId       String
+  receivedByUserId   String
+  groupId            String?
+  relatedExpenseIds  String[] // Array of expense IDs
+  createdByUserId    String
+  createdAt          DateTime @default(now())
+
+  // Relations
+  paidByUser         User      @relation("PaidBy", fields: [paidByUserId], references: [id])
+  receivedByUser     User      @relation("ReceivedBy", fields: [receivedByUserId], references: [id])
+  createdByUser      User      @relation("CreatedBy", fields: [createdByUserId], references: [id])
+  group              Group?    @relation(fields: [groupId], references: [id])
+  sourceImport       Import?   @relation(fields: [sourceImportId], references: [id])
+  sourceImportRow    ImportRow? @relation(fields: [sourceImportRowId], references: [id])
+
+  importRowsCreated  ImportRow[] @relation("CreatedSettlement")
+
+  @@index([groupId])
+  @@index([paidByUserId, groupId])
+  @@index([receivedByUserId, groupId])
+  @@index([date])
+  @@index([groupId, date])
+  @@index([sourceImportRowId])
+}
+
+model GroupMembership {
+  id                String    @id @default(uuid())
+  groupId           String
+  userId            String
+  role              String
+  joinedAt          DateTime
+  leftAt            DateTime?
+  source            String
+  sourceImportRowId String?
+  createdByUserId   String
+
+  // Relations
+  group             Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user              User      @relation("UserMemberships", fields: [userId], references: [id])
+  sourceImportRow   ImportRow? @relation(fields: [sourceImportRowId], references: [id])
+
+  @@index([groupId])
+  @@index([userId])
+  @@index([groupId, userId])
+  @@index([groupId, joinedAt])
+}
+
+model Import {
+  id            String    @id @default(uuid())
+  groupId       String
+  uploadedById  String
+  fileName      String
+  status        String
+  rowCount      Int
+  importedCount Int
+  skippedCount  Int
+  anomalyCount  Int
+  blockingCount Int
+  createdAt     DateTime  @default(now())
+  approvedAt    DateTime?
+  committedAt   DateTime?
+
+  // Relations
+  group         Group           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  uploadedBy    User            @relation(fields: [uploadedById], references: [id])
+  rows          ImportRow[]
+  anomalies     ImportAnomaly[]
+  reviews       AnomalyReview[]
+  aliases       Alias[]
+  reports       ImportReport[]
+  expenses      Expense[]
+  settlements   Settlement[]
+
+  @@index([uploadedById])
+  @@index([groupId])
+  @@index([status])
+}
+
+model ImportRow {
+  id                  String   @id @default(uuid())
+  importId            String
+  groupId             String
+  rowNumber           Int
+  raw                 Json     // Raw keys-values mapping
+  parsed              Json
+  normalized          Json?
+  status              String
+  createdExpenseId    String?
+  createdSettlementId String?
+
+  // Relations
+  import              Import          @relation(fields: [importId], references: [id], onDelete: Cascade)
+  group               Group           @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  createdExpense      Expense?        @relation("CreatedExpense", fields: [createdExpenseId], references: [id])
+  createdSettlement   Settlement?     @relation("CreatedSettlement", fields: [createdSettlementId], references: [id])
+  anomalies           ImportAnomaly[]
+  reviews             AnomalyReview[]
+  expenses            Expense[]
+  expenseSplits       ExpenseSplit[]
+  settlements         Settlement[]
+  memberships         GroupMembership[]
+
+  @@index([importId])
+  @@index([importId, rowNumber])
+  @@index([importId, status])
+}
+
+model ImportAnomaly {
+  id              String   @id @default(uuid())
+  importId        String
+  rowId           String
+  rowNumber       Int
+  type            String
+  severity        String
+  message         String
+  suggestedAction String
+  confidenceScore Float
+  status          String
+  metadata        Json?
+
+  // Relations
+  import          Import          @relation(fields: [importId], references: [id], onDelete: Cascade)
+  row             ImportRow       @relation(fields: [rowId], references: [id], onDelete: Cascade)
+  reviews         AnomalyReview[]
+
+  @@index([importId])
+  @@index([rowId])
+  @@index([importId, status])
+  @@index([importId, type])
+}
+
+model AnomalyReview {
+  id             String   @id @default(uuid())
+  importId       String
+  anomalyId      String
+  rowId          String
+  reviewerId     String
+  decision       String
+  correctedValue Json?
+  note           String?
+  reviewedAt     DateTime
+
+  // Relations
+  import         Import        @relation(fields: [importId], references: [id], onDelete: Cascade)
+  anomaly        ImportAnomaly @relation(fields: [anomalyId], references: [id], onDelete: Cascade)
+  row            ImportRow     @relation(fields: [rowId], references: [id], onDelete: Cascade)
+  reviewer       User          @relation(fields: [reviewerId], references: [id])
+
+  @@index([importId])
+  @@index([anomalyId])
+  @@index([reviewerId])
+}
+
+model Alias {
+  id              String   @id @default(uuid())
+  groupId         String
+  rawName         String
+  normalizedName  String
+  userId          String
+  confidence      Float
+  source          String
+  sourceImportId  String?
+  createdByUserId String
+
+  // Relations
+  group           Group   @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user            User    @relation("UserAlias", fields: [userId], references: [id])
+  sourceImport    Import? @relation(fields: [sourceImportId], references: [id])
+  createdByUser   User    @relation("CreatedBy", fields: [createdByUserId], references: [id])
+
+  @@index([groupId, rawName])
+  @@index([userId])
+}
+
+model CurrencyRate {
+  id              String   @id @default(uuid())
+  fromCurrency    String
+  toCurrency      String
+  rate            Float
+  effectiveDate   DateTime
+  source          String
+  createdByUserId String
+
+  // Relations
+  createdByUser   User      @relation(fields: [createdByUserId], references: [id])
+  expenses        Expense[]
+
+  @@index([fromCurrency, toCurrency, effectiveDate])
+  @@index([effectiveDate])
+}
+
+model ImportReport {
+  id              String   @id @default(uuid())
+  importId        String
+  groupId         String
+  generatedById   String
+  summaryJson     Json
+  generatedAt     DateTime
+
+  // Relations
+  import          Import   @relation(fields: [importId], references: [id], onDelete: Cascade)
+  group           Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  generatedBy     User     @relation(fields: [generatedById], references: [id])
+
+  @@index([importId])
+  @@index([groupId])
+}
