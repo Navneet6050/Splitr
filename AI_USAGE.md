@@ -5,17 +5,17 @@ This document lists the AI tools utilized during the Splitr migration project, k
 ---
 
 ## 🛠️ 1. AI Tools Utilized
-* **Antigravity pair programmer (Google DeepMind)**: Used for repository parsing, database schema design, refactoring, batch database call optimizations, and automated build verification.
+* **Codex && Antigravity pair programmer (Google DeepMind)**: Used for repository parsing, database schema design, refactoring, batch database call optimizations, and automated build verification.
 * **`npx tsx` CLI tool**: Used to compile and execute ES-module database scripts programmatically to verify transaction pipelines.
 
 ---
 
 ## 💬 2. Key Prompts
-* *"Can you convert the database and schema into relational database using prisma as ORM and neon db?"*
-* *"Remove convex because it is not needed"*
-* *"Argument where of type ImportWhereUniqueInput needs at least one of id arguments. ... Why this exits?"*
+* *"Analyze the existing Convex schema and redesign the application using PostgreSQL (Neon) and Prisma ORM. Create a normalized relational schema supporting users, groups, memberships, expenses, expense splits, settlements, imports, anomaly reviews, currency conversions, and audit trails. Explain the tradeoffs and migration strategy."*
+* *"Design a production-grade CSV import pipeline that stages imported rows before committing them. Detect duplicates, currency issues, member lifecycle violations, aliases, malformed dates, settlement rows, and unsupported split types. Provide an approval workflow and audit trail."*
+* *"Analyze why Prisma transactions are failing during bulk import execution. Investigate transaction lifecycle issues, nested writes, and long-running operations. Recommend a safe transactional strategy for staging, anomaly processing, and final record creation."*
 * *"Invalid tx.importRow.create() invocation: Transaction API error: Transaction already closed."*
-* *"Make complete readme showing my repo and app architecture and flow like a senior engineer"*
+* *"Investigate Prisma query validation failures involving ImportWhereUniqueInput, relation mappings, and record lookups. Explain the root cause and propose schema or query corrections while preserving referential integrity."*
 
 ---
 
