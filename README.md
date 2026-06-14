@@ -1,161 +1,304 @@
-# Splitr: Relational Expense Sharing & Anomaly-Detection Engine
+# Splitr — Collaborative Expense Ledger with Intelligent CSV Ingestion
 
-Splitr is a high-performance bill-splitting and financial ledger application built with **Next.js (App Router)**, **Prisma ORM**, and **PostgreSQL (Neon DB)**, developed in pair programming with **Antigravity AI (Google DeepMind)**. The platform features dynamic multi-currency calculations, an advanced CSV import validation pipeline, serverless background jobs, and a unique **API Proxy Bridge** that facilitates server action dispatching.
+> A full-stack financial splitting platform with a multi-stage CSV import pipeline, anomaly detection engine, temporal membership enforcement, and pairwise debt resolution — built on Next.js 15, Prisma ORM, and PostgreSQL.
 
 ---
 
-## 🏗️ System Architecture
+## Table of Contents
 
-Splitr utilizes a decoupled serverless-ready architecture optimized for scale, consistency, and low latency:
+- [Overview](#overview)
+- [Tech Stack](#tech-stack)
+- [System Architecture](#system-architecture)
+- [Database Schema](#database-schema)
+- [CSV Import Pipeline](#csv-import-pipeline)
+- [Anomaly Detection Engine](#anomaly-detection-engine)
+- [Core Features](#core-features)
+- [Environment Variables](#environment-variables)
+- [Local Setup](#local-setup)
+- [Reviewer Walkthrough](#reviewer-walkthrough)
+- [Assignment Coverage Matrix](#assignment-coverage-matrix)
+- [AI Assistance Disclosure](#ai-assistance-disclosure)
+- [Documentation Index](#documentation-index)
+
+---
+
+## Overview
+
+Splitr is a production-grade expense-sharing application that goes beyond simple bill splitting. Its central feature is a **CSV ingestion pipeline** that accepts raw spreadsheet exports, stages them into a review layer, runs nine independent anomaly detectors, and only commits clean, validated records to the ledger. Currency conversion, name alias resolution, and temporal membership enforcement are all handled automatically before a single row reaches the database.
+
+The application resolves group balances using a **pairwise debt simplification algorithm** that collapses circular debts into the minimum set of direct transfers, and exposes this through a clean dashboard.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 15 (App Router), Standard CSS with custom design tokens |
+| ORM & Database | Prisma ORM → Neon DB (PostgreSQL, serverless) |
+| Authentication | Clerk (JWT, Google OAuth, email) |
+| Background Jobs | Inngest (serverless queues) |
+| Email | Resend |
+| AI Integration | Gemini API (monthly spending insights) |
+
+---
+
+## System Architecture
+
+Splitr uses an **API Proxy Bridge** pattern — a JavaScript `Proxy` object intercepts Convex-style client calls (e.g. `api.users.getCurrentUser`) and re-routes them dynamically to Next.js Server Actions. This adaptation layer preserved compatibility across 20+ pages during a mid-project database migration without requiring a full rewrite.
 
 ```mermaid
-graph TD
-    Client["Next.js Client Components"] -->|dot-notation call| Proxy["Client-Side API Proxy Bridge"]
-    Proxy -->|Dynamic Server Action Resolve| ServerActions["Next.js Server Actions / API Bridge"]
-    ServerActions -->|Authentication Verification| Clerk["Clerk Auth / Identity"]
-    ServerActions -->|Relational Queries| Prisma["Prisma ORM Client"]
-    Prisma -->|Transaction Execution| Postgres["Neon DB / PostgreSQL"]
-    Postgres -->|Async Trigger Events| Inngest["Inngest Serverless Queues"]
-    Inngest -->|Notifications & Reports| Resend["Resend Mail Service"]
+flowchart LR
+    subgraph Browser
+        A[React Client Components]
+        B[API Proxy Bridge\nconvex/_generated/api.js]
+    end
+
+    subgraph Server["Next.js Server (App Router)"]
+        C[Server Actions\nlib/api-bridge.js]
+        D[Clerk Auth\nJWT Verification]
+    end
+
+    subgraph Data["Data & Services"]
+        E[Prisma ORM]
+        F[Neon DB\nPostgreSQL]
+        G[Inngest\nJob Queues]
+        H[Resend\nEmail]
+    end
+
+    A -->|dot-notation call| B
+    B -->|dynamic resolution| C
+    C -->|verify identity| D
+    C -->|relational queries| E
+    E -->|transactions| F
+    F -->|async triggers| G
+    G -->|notifications & reports| H
 ```
 
-### Key Architectural Layers
+### Architectural Layers
 
-1. **Frontend (Next.js 15 App Router)**: Optimized client rendering, Server-Side Rendering (SSR) for static content, and standard CSS with custom design tokens.
-2. **Dynamic API Proxy Bridge (`convex/_generated/api.js` & `hooks/use-convex-query.js`)**: An architectural adaptation pattern that intercepts client-side Convex references (e.g., `api.users.getCurrentUser`) via JavaScript `Proxy` objects and routes them dynamically to Next.js Server Actions (`lib/api-bridge.js`). This avoided rewrites across 20+ pages during the database migration.
-3. **Database & ORM (PostgreSQL & Prisma)**: A fully normalized relational schema deployed on Neon DB, complete with foreign key constraints, index maps for rapid ledger lookups, and transaction boundaries.
-4. **Background Orchestration (Inngest & Resend)**: Event-driven worker queues handling background operations like scheduled payment reminders and monthly AI-driven spending insights without blocking the main event loop.
+**1. Frontend** — Next.js 15 App Router with SSR for static content and client rendering for interactive import grids.
+
+**2. API Proxy Bridge** — `Proxy`-based adapter in `convex/_generated/api.js` and `hooks/use-convex-query.js` that maps Convex-style queries to Next.js Server Actions, eliminating a full page-by-page migration.
+
+**3. Database Layer** — Fully normalized relational schema on Neon DB with foreign key constraints, cascading deletes, and indexed ledger lookups via Prisma.
+
+**4. Background Orchestration** — Inngest queues handle scheduled payment reminders and AI-generated spending summaries without blocking request threads.
 
 ---
 
-## 🗄️ Relational Database Schema
+## Database Schema
 
-The database model is designed for strict integrity, featuring cascading deletes for expenses/settlements, and transactional staging tables for CSV imports:
+The schema enforces strict referential integrity. Import staging uses dedicated tables (`Import`, `ImportRow`, `ImportAnomaly`) so raw CSV data is never written directly to the production ledger.
 
 ```mermaid
 erDiagram
-    User ||--o{ GroupMembership : has
-    User ||--o{ Expense : pays
-    User ||--o{ ExpenseSplit : owes
-    User ||--o{ Settlement : pays_receives
-    Group ||--|{ GroupMembership : contains
-    Group ||--o{ Expense : records
-    Group ||--o{ Settlement : tracks
-    Import ||--|{ ImportRow : stages
-    ImportRow ||--o{ ImportAnomaly : generates
-    ImportRow ||--o{ AnomalyReview : receives
-    Import ||--o{ Alias : defines
+    User {
+        string id PK
+        string clerkId
+        string name
+        string email
+    }
+    Group {
+        string id PK
+        string name
+        string currency
+    }
+    GroupMembership {
+        string id PK
+        datetime joinedAt
+        datetime leftAt
+    }
+    Expense {
+        string id PK
+        decimal amount
+        string currency
+        string splitType
+        datetime date
+    }
+    ExpenseSplit {
+        string id PK
+        decimal amountOwed
+        string ratio
+    }
+    Settlement {
+        string id PK
+        decimal amount
+        datetime settledAt
+    }
+    Import {
+        string id PK
+        string status
+        string fileName
+    }
+    ImportRow {
+        string id PK
+        json rawData
+        string status
+    }
+    ImportAnomaly {
+        string id PK
+        string type
+        string severity
+    }
+
+    User ||--o{ GroupMembership : "belongs to"
+    Group ||--|{ GroupMembership : "has"
+    User ||--o{ Expense : "paid by"
+    Group ||--o{ Expense : "contains"
+    Expense ||--o{ ExpenseSplit : "split into"
+    User ||--o{ ExpenseSplit : "owes"
+    Group ||--o{ Settlement : "tracks"
+    User ||--o{ Settlement : "party in"
+    Import ||--|{ ImportRow : "stages"
+    ImportRow ||--o{ ImportAnomaly : "triggers"
 ```
 
-### Main Entities
-* **`User`**: Core user profiles synchronized with Clerk JWT identity tokens.
-* **`Group`**: Collaborative financial scopes creating ledger boundaries.
-* **`GroupMembership`**: Historical, time-bound membership records. Tracks when users join or leave, allowing accurate temporal splits.
-* **`Expense` & `ExpenseSplit`**: Normalized transaction details and split records (supporting equal, percentage, exact, and share split ratios).
-* **`Settlement`**: Financial transfers tracking debt clearing logs.
-* **`Import` / `ImportRow` / `ImportAnomaly`**: CSV staging tables allowing users to review and correct transaction anomalies before committing them to the main ledger.
+### Key Entities
+
+- **`User`** — Profiles synced from Clerk JWT tokens on first login.
+- **`Group`** — Financial scope that boundaries all expenses and settlements.
+- **`GroupMembership`** — Time-bound membership with `joinedAt` / `leftAt` timestamps for temporal validation during imports.
+- **`Expense` + `ExpenseSplit`** — Normalized transaction records supporting equal, percentage, exact-amount, and share-ratio splits.
+- **`Settlement`** — Explicit debt-clearing records.
+- **`Import` / `ImportRow` / `ImportAnomaly`** — CSV staging tables that isolate raw data for review before ledger commitment.
 
 ---
 
-## 🔄 Data Pipeline: CSV Import & Committing
+## CSV Import Pipeline
 
-One of Splitr's key engines is the `/import` workflow, designed to clean, normalize, and commit legacy spreadsheet records:
+The import flow processes raw CSV files through a staged validation pipeline before writing anything to the main ledger.
 
 ```mermaid
 sequenceDiagram
-    actor User as "User Agent"
-    participant SV as "Client Import Page"
-    participant SA as "Imports Server Action"
-    participant DB as "PostgreSQL (Neon)"
+    actor U as User
+    participant UI as Import Page
+    participant SA as Server Action
+    participant DB as PostgreSQL
 
-    User->>SV: Upload CSV File
-    SV->>SA: create({ groupId, csvText, fileName })
-    SA->>DB: Start Transaction (30s Timeout)
-    SA->>DB: Batch Insert Import & Staged Rows (createManyAndReturn)
-    Note over SA,DB: Anomaly Detectors Analyze Staged Rows
-    SA->>DB: Batch Insert Anomalies (createMany)
-    SA->>DB: Update Import Status (needs_review / ready)
-    SA->>DB: Commit Transaction
-    SA->>SV: Return Import Staging Report
-    User->>SV: Review / Apply Corrections (Skip, Convert, Edit)
-    User->>SV: Click Approve & Commit
-    SV->>SA: commit({ importId })
-    SA->>DB: Start Transaction (60s Timeout)
-    Note over SA,DB: Run Currency Conversion, Alias Resolutions & Membsh. Windows
-    SA->>DB: Insert Cleaned Expenses, Splits & Settlements
-    SA->>DB: Commit Transaction
-    SA->>SV: Render Final JSON Commit Report
+    U->>UI: Upload CSV file
+    UI->>SA: createImport({ groupId, csvText, fileName })
+    SA->>DB: Open transaction (30s timeout)
+    SA->>DB: Batch insert Import + ImportRows (createManyAndReturn)
+    Note over SA,DB: 9 anomaly detectors run in-memory
+    SA->>DB: Batch insert ImportAnomalies (createMany)
+    SA->>DB: Set import status → needs_review / ready
+    SA->>DB: Commit transaction
+    SA-->>UI: Return staging report
+    U->>UI: Review rows — Skip / Convert / Edit
+    U->>UI: Click "Approve & Commit"
+    UI->>SA: commitImport({ importId })
+    SA->>DB: Open transaction (60s timeout)
+    Note over SA,DB: Currency conversion, alias resolution, membership checks
+    SA->>DB: Insert Expenses, ExpenseSplits, Settlements
+    SA->>DB: Commit transaction
+    SA-->>UI: Render JSON commit report
 ```
 
----
+### Performance: Batch Insertion
 
-## ⚡ Design Patterns & Performance Optimizations
-
-### 1. Interactive Transaction Batching
-To bypass network latency over remote database connections (avoiding Prisma transaction expiration timeouts `P2028`), the staging pipeline is optimized using batch operations:
-* Loops of single queries are consolidated using **`createManyAndReturn`** and **`createMany`**, reducing transaction overhead from hundreds of sequential HTTP calls down to a single PostgreSQL batch insertion command.
-* Dynamic query timeout maps configure safe execution bounds (`30s` for staging, `60s` for complex commits).
-
-### 2. Temporal Membership Windows
-Group memberships track strict `joinedAt` and `leftAt` timestamps. During CSV imports, Splitr validates expense dates against active membership windows:
-* If a participant (e.g. `Dev`) is recorded on an expense date outside their membership window, the anomaly engine flag a **`MEMBERSHIP_OUT_OF_BOUNDS`** alert, suggesting conversion to temporary membership or exclusion.
-
-### 3. Pairwise Ledger Resolution
-To render dashboard balances, Splitr executes a pairwise resolution algorithm:
-1. Pulls all expenses and settlements for a group.
-2. Accumulates raw owed/owes ratios per participant.
-3. Computes net pairwise debts.
-4. Generates an audit trail path mapping exactly who owes whom, reducing multiple circular debts into direct, optimized transfers.
+Early implementations used sequential `await tx.importRow.create()` calls inside a Prisma interactive transaction, which expired (`P2028`) for any CSV with more than 12 rows. The pipeline was rewritten to use `createManyAndReturn` + `createMany`, collapsing 170+ sequential database round-trips into three batch operations per import.
 
 ---
 
-## ⚙️ Environment Configuration
+## Anomaly Detection Engine
 
-Ensure your `.env` file at the root contains the following variables:
+Nine independent detector modules run against staged rows and classify issues as blocking (🔴) or advisory (🟡). Blocking anomalies must be resolved before the commit step is permitted.
+
+| Anomaly Code | Severity | Detector Module | Resolution |
+|---|---|---|---|
+| `DUPLICATE_EXPENSE` | 🔴 Blocking | `duplicateDetector.js` | Skip or force approve |
+| `NEAR_DUPLICATE` | 🟡 Warning | `duplicateDetector.js` | Confirm or skip |
+| `INVALID_DATE` | 🔴 Blocking | `dateFormatDetector.js` | Edit inline or skip |
+| `AMBIGUOUS_DATE` | 🔴 Blocking | `dateFormatDetector.js` | Confirm parsed date or edit |
+| `MISSING_PAYER` | 🔴 Blocking | `participantDetector.js` | Select member or skip |
+| `CURRENCY_CONVERSION_REQUIRED` | 🟡 Warning | `currencyDetector.js` | Auto-converted to INR; originals preserved |
+| `NEGATIVE_AMOUNT` | 🔴 Blocking | `amountDetector.js` | Convert to settlement or skip |
+| `SETTLEMENT_LOGGED_AS_EXPENSE` | 🔴 Blocking | `participantDetector.js` | Convert to settlement |
+| `NON_STANDARD_SPLIT_TYPE` | 🟡 Warning | `splitTypeDetector.js` | Auto-normalized to equal or weighted |
+| `NAME_ALIAS` | 🟡 Warning | `aliasDetector.js` | Auto-resolved via `Alias` table |
+| `MEMBERSHIP_VIOLATION` | 🔴 Blocking | `membershipDetector.js` | Adjust membership window or skip |
+
+---
+
+## Core Features
+
+### Expense Splitting
+- **Four split modes**: equal, percentage, exact amount, and weighted share ratio.
+- All splits are stored in normalized `ExpenseSplit` records, not as JSON blobs.
+
+### Temporal Membership Windows
+Group memberships carry `joinedAt` / `leftAt` timestamps. During import, any expense dated outside a participant's active membership window triggers a `MEMBERSHIP_VIOLATION` anomaly with options to extend the membership window or exclude the participant.
+
+### Pairwise Debt Resolution
+The balance engine:
+1. Aggregates all expenses and settlements for a group.
+2. Computes net owed/owes ratios per participant pair.
+3. Applies a greedy simplification algorithm to reduce circular debts into the minimum number of direct transfers.
+4. Produces a human-readable audit trail of who owes whom.
+
+### Name Alias Resolution
+The `Alias` table maps alternate spellings (e.g. `"Dev"` → `"Devraj Mehta"`) to canonical member records. Aliases are applied automatically during the commit phase.
+
+### Multi-Currency Support
+The `CurrencyRate` table stores conversion rates. Rows with non-INR amounts are automatically converted during commit; original currency values are retained for reference.
+
+### Background Jobs
+Inngest queues power two async workflows without blocking request threads:
+- **Payment reminders**: scheduled nudges to unsettled members.
+- **Monthly AI insights**: Gemini-generated spending summaries delivered via Resend.
+
+---
+
+## Environment Variables
+
+Create a `.env` file at the repository root:
 
 ```env
-# Database Connections
+# Database
 DATABASE_URL="postgresql://user:password@neon-db-endpoint/dbname?sslmode=require"
 DIRECT_URL="postgresql://user:password@neon-db-endpoint/dbname?sslmode=require"
 
-# Authentication (Clerk)
+# Clerk Authentication
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_SECRET_KEY=sk_test_...
 NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
 NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
 CLERK_JWT_ISSUER_DOMAIN="https://clerk-issuer-domain"
 
-# Services
+# External Services
 RESEND_API_KEY=re_...
 GEMINI_API_KEY=AIzaSy...
 ```
 
 ---
 
-## 🚀 Getting Started
+## Local Setup
 
-### 1. Install Workspace Dependencies
+**Prerequisites**: Node.js 18+, a Neon DB project, and Clerk application credentials.
+
+### 1. Install dependencies
+
 ```bash
 npm install
 ```
 
-### 2. Run Prisma Database Migrations
-Synchronize your Neon DB schema with the local schema definition:
+### 2. Push the schema to Neon DB
+
 ```bash
 npx prisma db push
 ```
 
-### 3. Launch Development Server
+### 3. Start the development server
+
 ```bash
 npm run dev
 ```
-Open [http://localhost:3000](http://localhost:3000) to view the application.
 
----
+Open [http://localhost:3000](http://localhost:3000). Signing in via Clerk automatically creates your `User` record.
 
-## 🧪 Verification & Linting
+### 4. Build and lint checks
 
-Verify syntax, typing, and standard ESM import compatibility across Next.js SSR boundaries:
 ```bash
 npm run build
 npm run lint
@@ -163,127 +306,95 @@ npm run lint
 
 ---
 
-## ✅ Assignment Requirements Coverage Matrix
+## Reviewer Walkthrough
 
-This table maps every explicit assignment requirement to the Splitr file(s) where it is implemented. Nothing in this table is inferred — each entry was verified against the live codebase.
+End-to-end demonstration of the full import pipeline in under 10 minutes:
 
-| Requirement | Status | Key File(s) |
-| :--- | :--- | :--- |
-| Upload & stage a CSV expense file | ✅ Done | [import/page.jsx](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/app/(main)/import/page.jsx), [imports.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/actions/imports.js) |
-| Anomaly detection before commit | ✅ Done | [lib/import/detectors/](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/) — 9 detector modules |
-| User review & correction workflow | ✅ Done | Approve / Skip / Convert to Settlement in [import/page.jsx](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/app/(main)/import/page.jsx) |
-| Commit approved rows to the ledger | ✅ Done | `commitImport()` in [imports.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/actions/imports.js) |
-| Generate import report | ✅ Done | `generateReport()` in [imports.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/actions/imports.js); persisted to `ImportReport` table |
-| Expense splitting — equal / % / exact | ✅ Done | [expenses.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/actions/expenses.js), `ExpenseSplit` in [schema.prisma](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/prisma/schema.prisma) |
-| Settlement / repayment logging | ✅ Done | [settlements.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/actions/settlements.js) |
-| USD → INR currency conversion | ✅ Done | [currency.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/actions/currency.js), `CurrencyRate` table |
-| Temporal membership windows | ✅ Done | [memberships.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/actions/memberships.js), [membershipDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/membershipDetector.js) |
-| Pairwise debt resolution / simplification | ✅ Done | [balances.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/actions/balances.js) |
-| Name alias resolution | ✅ Done | [aliasDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/aliasDetector.js), `Alias` table |
-| Setup instructions in README | ✅ Done | **Getting Started** section above |
-| AI usage disclosure | ✅ Done | [AI_USAGE.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/AI_USAGE.md) |
-| Anomaly log (`SCOPE.md`) | ✅ Done | [SCOPE.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/SCOPE.md) |
-| Database schema (`SCOPE.md`) | ✅ Done | [SCOPE.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/SCOPE.md) + [DATABASE_DESIGN.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/DATABASE_DESIGN.md) |
-| Decision log (`DECISIONS.md`) | ✅ Done | [DECISIONS.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/DECISIONS.md) — 6 ADRs with options, tradeoffs & revisit criteria |
+**Step 1 — Environment** (~3 min): Complete the [Local Setup](#local-setup) steps and sign in.
 
----
+**Step 2 — Create a Group** (~1 min): Go to **Contacts → Create Group** and add members whose names match the `paid_by` / `split_with` values in your CSV.
 
-## 🤖 AI Assistance Disclosure
+**Step 3 — Upload a CSV** (~2 min): Navigate to **Import CSV** in the sidebar. Drop a file with these required columns:
 
-Splitr was developed in pair programming with **Codex** and **Antigravity (Google DeepMind)**. The full disclosure of tools, prompts, and human corrections is in [AI_USAGE.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/AI_USAGE.md).
-
-Three cases where AI output was wrong and manually corrected:
-
-| # | AI Mistake | How It Was Caught | Fix Applied |
-| :--- | :--- | :--- | :--- |
-| 1 | `useConvexMutation` re-created its dispatcher on every render, triggering an infinite loop of duplicate `User` inserts | Browser froze; devserver logs flooded with `INSERT INTO User` | Wrapped dispatcher in `useCallback` in [use-convex-query.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/hooks/use-convex-query.js) |
-| 2 | `useConvexQuery` forwarded the literal string `"skip"` as a query argument rather than short-circuiting, crashing the server with `PrismaClientValidationError` (`id: undefined`) | Runtime server crash on page load before any import existed | Added `args === "skip"` guard on line 23 of [use-convex-query.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/hooks/use-convex-query.js) |
-| 3 | Sequential `await tx.importRow.create()` calls inside a Prisma interactive transaction expired (`P2028`) for any CSV with 12+ rows | `Transaction already closed` thrown mid-import | Rewrote staging to use `createManyAndReturn` + in-memory accumulation; reduced 170+ DB roundtrips to 3 |
-
----
-
-## 🚩 Supported CSV Anomalies Summary
-
-The engine in [lib/import/detectors/](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/) identifies the following problems automatically during staging. Full resolution policies are in [SCOPE.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/SCOPE.md).
-
-| Anomaly | Severity | Detector | Reviewer Action in UI |
-| :--- | :--- | :--- | :--- |
-| `DUPLICATE_EXPENSE` | 🔴 Blocking | [duplicateDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/duplicateDetector.js) | Skip or Force Approve |
-| `NEAR_DUPLICATE` | 🟡 Warning | [duplicateDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/duplicateDetector.js) | Confirm or Skip |
-| `INVALID_DATE` | 🔴 Blocking | [dateFormatDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/dateFormatDetector.js) | Edit date in grid or Skip |
-| `AMBIGUOUS_DATE` | 🔴 Blocking | [dateFormatDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/dateFormatDetector.js) | Confirm parsed date or edit |
-| `MISSING_PAYER` | 🔴 Blocking | [participantDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/participantDetector.js) | Select member or Skip |
-| `CURRENCY_CONVERSION_REQUIRED` | 🟡 Warning | [currencyDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/currencyDetector.js) | Auto-converted to INR; original values preserved |
-| `NEGATIVE_AMOUNT` | 🔴 Blocking | [amountDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/amountDetector.js) | Convert to Settlement or Skip |
-| `SETTLEMENT_LOGGED_AS_EXPENSE` | 🔴 Blocking | [participantDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/participantDetector.js) | Convert to Settlement |
-| `NON_STANDARD_SPLIT_TYPE` | 🟡 Warning | [splitTypeDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/splitTypeDetector.js) | Auto-normalized to equal or weighted |
-| `NAME_ALIAS` | 🟡 Warning | [aliasDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/aliasDetector.js) | Auto-resolved via `Alias` table |
-| `MEMBERSHIP_VIOLATION` | 🔴 Blocking | [membershipDetector.js](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/lib/import/detectors/membershipDetector.js) | Adjust membership dates or Skip |
-
----
-
-## 🗺️ Reviewer Walkthrough / Demo Flow
-
-Follow these steps to evaluate the full import-to-ledger pipeline in under 10 minutes:
-
-### Step 1 — Environment Setup (~3 min)
-```bash
-npm install
-npx prisma db push    # sync schema to Neon DB
-npm run dev           # open http://localhost:3000
 ```
-Sign in via Clerk (Google OAuth or email). Your `User` record is created automatically on first login.
+date, description, paid_by, amount, currency, split_type, split_with, split_details, notes
+```
 
-### Step 2 — Create a Group (~1 min)
-* Navigate to **Contacts → Create Group**.
-* Add member names that match the `paid_by` / `split_with` values in your CSV.
+The staging grid renders immediately. Rows with detected anomalies are flagged with 🔴 or 🟡 badges.
 
-### Step 3 — Upload & Stage a CSV (~2 min)
-* Navigate to **Import CSV** in the sidebar.
-* Drop a CSV with required columns: `date`, `description`, `paid_by`, `amount`, `currency`, `split_type`, `split_with`, `split_details`, `notes`.
-* The staging grid renders immediately. Anomalous rows are flagged with 🔴 blocking or 🟡 warning badges.
+**Step 4 — Resolve Anomalies** (~2 min): Blocking rows must be actioned before commit. Use **Skip** to discard a row, or click the anomaly badge to access conversion actions (e.g. *Convert to Settlement*). Warning rows can be committed as-is.
 
-### Step 4 — Resolve Anomalies (~2 min)
-* **Blocking rows** must be resolved before committing: click **Skip** to discard, or click the action badge to **Convert to Settlement** for repayment rows.
-* **Warning rows** may be committed as-is.
+**Step 5 — Commit** (~1 min): Click **Approve & Commit**. The engine writes `Expense`, `ExpenseSplit`, and `Settlement` records, generates an `ImportReport`, and renders a summary showing rows ingested, skipped, anomalies resolved, and currencies converted.
 
-### Step 5 — Commit & Review Report (~1 min)
-* Click **Approve & Commit**.
-* The engine creates `Expense`, `ExpenseSplit`, and `Settlement` records and generates an `ImportReport`.
-* The on-screen report shows total ingested rows, skipped rows, anomalies resolved, and currency conversions applied.
-* A static cached copy is at [IMPORT_REPORT.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/IMPORT_REPORT.md).
-
-### Step 6 — Verify Balances
-* Navigate to **Balances** to confirm the greedy pairwise ledger resolution — showing exactly who owes whom and the optimal payment paths.
+**Step 6 — Verify Balances**: Navigate to **Balances** to see the pairwise ledger — direct, simplified debt paths with no circular transfers.
 
 ---
 
-## 📄 Deliverables Mapping
+## Assignment Coverage Matrix
 
-All required assignment deliverables are at the repository root:
+Every requirement mapped to the implementing file(s), verified against the live codebase:
 
-| Required Deliverable | File |
-| :--- | :--- |
-| README with setup instructions and AI used | [README.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/README.md) |
-| SCOPE.md — anomaly log + database schema | [SCOPE.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/SCOPE.md) |
-| DECISIONS.md — decision log with options and rationale | [DECISIONS.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/DECISIONS.md) |
-| Import report — anomalies detected and actions taken | [IMPORT_REPORT.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/IMPORT_REPORT.md) |
-| AI_USAGE.md — tools, prompts, three AI correction cases | [AI_USAGE.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/AI_USAGE.md) |
+| Requirement | Status | Implementation |
+|---|---|---|
+| Upload & stage a CSV expense file | ✅ | `app/(main)/import/page.jsx`, `lib/actions/imports.js` |
+| Anomaly detection before commit | ✅ | `lib/import/detectors/` — 9 detector modules |
+| User review & correction workflow | ✅ | Approve / Skip / Convert in `import/page.jsx` |
+| Commit approved rows to the ledger | ✅ | `commitImport()` in `lib/actions/imports.js` |
+| Generate import report | ✅ | `generateReport()` in `imports.js`; persisted to `ImportReport` |
+| Expense splitting — equal / % / exact | ✅ | `lib/actions/expenses.js`, `ExpenseSplit` in `schema.prisma` |
+| Settlement / repayment logging | ✅ | `lib/actions/settlements.js` |
+| USD → INR currency conversion | ✅ | `lib/actions/currency.js`, `CurrencyRate` table |
+| Temporal membership windows | ✅ | `lib/actions/memberships.js`, `membershipDetector.js` |
+| Pairwise debt resolution | ✅ | `lib/actions/balances.js` |
+| Name alias resolution | ✅ | `aliasDetector.js`, `Alias` table |
+| Setup instructions | ✅ | **Local Setup** section above |
+| AI usage disclosure | ✅ | `AI_USAGE.md` |
+| Anomaly log | ✅ | `SCOPE.md` |
+| Database schema | ✅ | `SCOPE.md`, `DATABASE_DESIGN.md` |
+| Decision log | ✅ | `DECISIONS.md` — 6 ADRs with options, tradeoffs, and revisit criteria |
 
-Additional supporting documentation:
+---
 
-| Document | Purpose |
-| :--- | :--- |
-| [ARCHITECTURE.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/ARCHITECTURE.md) | System overview, design rules, data flows |
-| [C4_MODEL.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/C4_MODEL.md) | C4 Levels 1–4 diagrams |
-| [DATABASE_DESIGN.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/DATABASE_DESIGN.md) | ER diagram, index matrix, temporal integrity SQL |
-| [SYSTEM_DESIGN.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/SYSTEM_DESIGN.md) | NFRs, capacity estimates, 5→1M scaling roadmap |
-| [SEQUENCE_DIAGRAMS.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/SEQUENCE_DIAGRAMS.md) | Mermaid flows: auth, expense, settlement, import, commit |
-| [SECURITY_REVIEW.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/SECURITY_REVIEW.md) | STRIDE threat model, IDOR mitigation, CSV safeguards |
-| [TEST_STRATEGY.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/TEST_STRATEGY.md) | Split rounding specs, timezone handling, QA matrix |
-| [PRODUCTION_READINESS.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/PRODUCTION_READINESS.md) | Readiness scorecard, error codes, backup/recovery |
-| [OBSERVABILITY.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/OBSERVABILITY.md) | Log schema, KPI metrics, alert thresholds |
-| [COST_ANALYSIS.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/COST_ANALYSIS.md) | Hosting cost models: 100 / 10K / 1M users |
-| [INTERVIEW_DEFENSE.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/INTERVIEW_DEFENSE.md) | 50 senior-level architecture Q&A |
-| [GAP_ANALYSIS.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/GAP_ANALYSIS.md) | Feature completeness matrix with risk levels |
-| [REQUIREMENT_TRACEABILITY.md](file:///c:/Users/manav/OneDrive/Desktop/ai-splitwise-clone/REQUIREMENT_TRACEABILITY.md) | Requirement → UI → action → schema → logic mapping |
+## AI Assistance Disclosure
+
+Splitr was developed with assistance from **Codex** and **Antigravity (Google DeepMind)**. Full tool disclosure, prompts used, and human corrections are documented in [`AI_USAGE.md`](./AI_USAGE.md).
+
+Three cases where AI output required manual correction:
+
+| # | What the AI Got Wrong | How It Was Caught | Fix |
+|---|---|---|---|
+| 1 | `useConvexMutation` re-created its dispatcher on every render, causing an infinite loop of duplicate `User` inserts | Browser froze; dev server flooded with `INSERT INTO User` logs | Wrapped dispatcher in `useCallback` in `hooks/use-convex-query.js` |
+| 2 | `useConvexQuery` forwarded the literal string `"skip"` as a query argument instead of short-circuiting, crashing the server with `PrismaClientValidationError` (`id: undefined`) | Runtime server crash on page load before any import existed | Added `args === "skip"` guard at line 23 of `use-convex-query.js` |
+| 3 | Sequential `await tx.importRow.create()` calls inside a Prisma transaction expired (`P2028`) for CSVs with 12+ rows | `Transaction already closed` error mid-import | Rewrote staging to use `createManyAndReturn` + in-memory accumulation, reducing 170+ DB round-trips to 3 |
+
+---
+
+## Documentation Index
+
+### Required Deliverables
+
+| File | Contents |
+|---|---|
+| [`README.md`](./README.md) | Setup instructions, architecture, AI disclosure |
+| [`SCOPE.md`](./SCOPE.md) | Anomaly log + database schema |
+| [`DECISIONS.md`](./DECISIONS.md) | 6 ADRs with options, tradeoffs, and revisit criteria |
+| [`IMPORT_REPORT.md`](./IMPORT_REPORT.md) | Static export of a sample import run |
+| [`AI_USAGE.md`](./AI_USAGE.md) | Tools, prompts, and three AI correction cases |
+
+### Supplementary Documentation
+
+| File | Purpose |
+|---|---|
+| [`ARCHITECTURE.md`](./ARCHITECTURE.md) | System overview, design principles, data flows |
+| [`C4_MODEL.md`](./C4_MODEL.md) | C4 Levels 1–4 diagrams |
+| [`DATABASE_DESIGN.md`](./DATABASE_DESIGN.md) | ER diagram, index matrix, temporal integrity SQL |
+| [`SYSTEM_DESIGN.md`](./SYSTEM_DESIGN.md) | NFRs, capacity estimates, 5→1M user scaling roadmap |
+| [`SEQUENCE_DIAGRAMS.md`](./SEQUENCE_DIAGRAMS.md) | Mermaid flows for auth, expense, settlement, import, and commit |
+| [`SECURITY_REVIEW.md`](./SECURITY_REVIEW.md) | STRIDE threat model, IDOR mitigation, CSV injection safeguards |
+| [`TEST_STRATEGY.md`](./TEST_STRATEGY.md) | Split rounding specs, timezone handling, QA matrix |
+| [`PRODUCTION_READINESS.md`](./PRODUCTION_READINESS.md) | Readiness scorecard, error codes, backup and recovery plan |
+| [`OBSERVABILITY.md`](./OBSERVABILITY.md) | Log schema, KPI metrics, alert thresholds |
+| [`COST_ANALYSIS.md`](./COST_ANALYSIS.md) | Hosting cost models at 100 / 10K / 1M users |
+| [`INTERVIEW_DEFENSE.md`](./INTERVIEW_DEFENSE.md) | 50 senior-level architecture Q&A |
+| [`GAP_ANALYSIS.md`](./GAP_ANALYSIS.md) | Feature completeness matrix with risk classifications |
+| [`REQUIREMENT_TRACEABILITY.md`](./REQUIREMENT_TRACEABILITY.md) | Requirement → UI → action → schema → logic mapping |
