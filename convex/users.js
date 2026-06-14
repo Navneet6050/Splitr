@@ -24,7 +24,7 @@ export const store = mutation({
     if (user !== null) {
       // If we've seen this identity before but the name, email, or image has changed, patch the values.
       const patchData = {};
-      if (user.name !== identity.name) {
+      if (identity.name && user.name !== identity.name) {
         patchData.name = identity.name;
       }
       if (identity.email && user.email !== identity.email) {
@@ -42,10 +42,12 @@ export const store = mutation({
     const newUser = {
       name: identity.name ?? "Anonymous",
       tokenIdentifier: identity.tokenIdentifier,
-      imageUrl: identity.pictureUrl,
     };
     if (identity.email) {
       newUser.email = identity.email;
+    }
+    if (identity.pictureUrl) {
+      newUser.imageUrl = identity.pictureUrl;
     }
     return await ctx.db.insert("users", newUser);
   },

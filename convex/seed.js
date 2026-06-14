@@ -19,16 +19,10 @@ export const seedDatabase = mutation({
     }
 
     // Step 1: Get your existing users
-    const users = await ctx.db.query("users").collect();
+    let users = await ctx.db.query("users").collect();
 
     if (users.length < 3) {
-      console.log(
-        "Not enough users in the database. Please ensure you have at least 3 users."
-      );
-      return {
-        skipped: true,
-        reason: "Not enough users",
-      };
+      users = await createFallbackUsers(ctx, users, 3);
     }
 
     // Step 2: Create groups
@@ -62,14 +56,62 @@ export const seedDatabase = mutation({
   },
 });
 
+// Seed some historical currency rates for USD -> INR
+export const seedCurrencyRates = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const users = await ctx.db.query("users").take(1);
+    if (users.length === 0) {
+      throw new Error("No users found to assign as currency rate creator.");
+    }
+    const createdBy = users[0]._id;
+
+    const existing = await ctx.db.query("currencyRates").collect();
+    if (existing.length > 0) {
+      return { skipped: true, existing: existing.length };
+    }
+
+    const rates = [
+      { fromCurrency: "USD", toCurrency: "INR", rate: 81.5, effectiveDate: Date.UTC(2025, 11, 1), source: "manual_seed", createdBy },
+      { fromCurrency: "USD", toCurrency: "INR", rate: 82.0, effectiveDate: Date.UTC(2026, 0, 1), source: "manual_seed", createdBy },
+      { fromCurrency: "USD", toCurrency: "INR", rate: 83.0, effectiveDate: Date.UTC(2026, 3, 1), source: "manual_seed", createdBy },
+      { fromCurrency: "USD", toCurrency: "INR", rate: 82.75, effectiveDate: Date.UTC(2026, 4, 1), source: "manual_seed", createdBy },
+    ];
+
+    for (const r of rates) {
+      await ctx.db.insert("currencyRates", r);
+    }
+    return { inserted: rates.length };
+  },
+});
+
+async function createFallbackUsers(ctx, existingUsers, targetCount) {
+  const fallbackNames = ["Alice", "Bob", "Charlie", "Dana", "Ethan"];
+  const users = [...existingUsers];
+  const now = Date.now();
+
+  for (let i = users.length; i < targetCount; i++) {
+    const name = fallbackNames[i] ?? `User ${i + 1}`;
+    const tokenIdentifier = `seed-user-${name.toLowerCase()}-${now}-${i}`;
+    const newUser = {
+      name,
+      tokenIdentifier,
+      email: `${name.toLowerCase()}@example.com`,
+    };
+    const userId = await ctx.db.insert("users", newUser);
+    users.push({ ...newUser, _id: userId });
+  }
+  return users;
+}
+
 // Helper to create groups
 async function createGroups(ctx, users) {
   const now = Date.now();
 
   // Using the users from your database
-  const user1 = users[0]; 
-  const user2 = users[1]; 
-  const user3 = users[2]; 
+  const user1 = users[0];
+  const user2 = users[1];
+  const user3 = users[2];
 
   const groupDatas = [
     {
@@ -147,7 +189,7 @@ async function createOneOnOneExpenses(ctx, users) {
     {
       description: "Cab ride to airport",
       amount: 450.0,
-      category: "transportation", 
+      category: "transportation",
       date: oneWeekAgo,
       paidByUserId: user2._id,
       splitType: "equal",

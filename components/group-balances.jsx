@@ -3,7 +3,8 @@
 import { useConvexQuery } from "@/hooks/use-convex-query";
 import { api } from "@/convex/_generated/api";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ArrowUpCircle, ArrowDownCircle } from "lucide-react";
+import { ArrowUpCircle, ArrowDownCircle, ChevronRight } from "lucide-react";
+import Link from "next/link";
 
 /**
  * Expected `balances` shape (one object per member):
@@ -16,7 +17,7 @@ import { ArrowUpCircle, ArrowDownCircle } from "lucide-react";
  *   owedBy: { from: string; amount: number }[];  // others → this member
  * }
  */
-export function GroupBalances({ balances }) {
+export function GroupBalances({ balances, groupId }) {
   const { data: currentUser } = useConvexQuery(api.users.getCurrentUser);
 
   /* ───── guards ────────────────────────────────────────────────────────── */
@@ -94,28 +95,55 @@ export function GroupBalances({ balances }) {
           {/* People who owe the current user */}
           {owedByMembers.length > 0 && (
             <div>
-              <h3 className="text-sm font-medium flex items-center mb-3">
+              <h3 className="text-sm font-medium flex items-center mb-3 text-neutral-800">
                 <ArrowUpCircle className="h-4 w-4 text-green-500 mr-2" />
                 Owed to you
               </h3>
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {owedByMembers.map((member) => (
-                  <div
-                    key={member.id}
-                    className="flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={member.imageUrl} />
-                        <AvatarFallback>
-                          {member.name?.charAt(0) ?? "?"}
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="text-sm">{member.name}</span>
-                    </div>
-                    <span className="font-medium text-green-600">
-                      ${member.amount.toFixed(2)}
-                    </span>
+                  <div key={member.id}>
+                    {groupId ? (
+                      <Link
+                        href={`/balances/drilldown?groupId=${groupId}&userAId=${me.id}&userBId=${member.id}`}
+                        className="flex items-center justify-between hover:bg-neutral-50/75 p-2 rounded-md transition-colors cursor-pointer group w-full"
+                        title={`Audit transaction logs with ${member.name}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Avatar className="h-8 w-8">
+                            <AvatarImage src={member.imageUrl} />
+                            <AvatarFallback>
+                              {member.name?.charAt(0) ?? "?"}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="text-sm font-medium group-hover:text-green-600 transition-colors">
+                            {member.name}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-green-600">
+                            ${member.amount.toFixed(2)}
+                          </span>
+                          <ChevronRight className="h-4 w-4 text-neutral-300 group-hover:text-neutral-500 transition-colors" />
+                        </div>
+                      </Link>
+                    ) : (
+                      <div className="flex items-center justify-between p-2">
+                        <div className="flex items-center gap-2">
+                          <Avatar className="h-8 w-8">
+                            <AvatarImage src={member.imageUrl} />
+                            <AvatarFallback>
+                              {member.name?.charAt(0) ?? "?"}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="text-sm font-medium">
+                            {member.name}
+                          </span>
+                        </div>
+                        <span className="font-semibold text-green-600">
+                          ${member.amount.toFixed(2)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -125,28 +153,55 @@ export function GroupBalances({ balances }) {
           {/* People the current user owes */}
           {owingToMembers.length > 0 && (
             <div>
-              <h3 className="text-sm font-medium flex items-center mb-3">
+              <h3 className="text-sm font-medium flex items-center mb-3 text-neutral-800">
                 <ArrowDownCircle className="h-4 w-4 text-red-500 mr-2" />
                 You owe
               </h3>
-              <div className="space-y-3">
+              <div className="space-y-2">
                 {owingToMembers.map((member) => (
-                  <div
-                    key={member.id}
-                    className="flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Avatar className="h-8 w-8">
-                        <AvatarImage src={member.imageUrl} />
-                        <AvatarFallback>
-                          {member.name?.charAt(0) ?? "?"}
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="text-sm">{member.name}</span>
-                    </div>
-                    <span className="font-medium text-red-600">
-                      ${member.amount.toFixed(2)}
-                    </span>
+                  <div key={member.id}>
+                    {groupId ? (
+                      <Link
+                        href={`/balances/drilldown?groupId=${groupId}&userAId=${member.id}&userBId=${me.id}`}
+                        className="flex items-center justify-between hover:bg-neutral-50/75 p-2 rounded-md transition-colors cursor-pointer group w-full"
+                        title={`Audit transaction logs with ${member.name}`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Avatar className="h-8 w-8">
+                            <AvatarImage src={member.imageUrl} />
+                            <AvatarFallback>
+                              {member.name?.charAt(0) ?? "?"}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="text-sm font-medium group-hover:text-red-600 transition-colors">
+                            {member.name}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-semibold text-red-600">
+                            ${member.amount.toFixed(2)}
+                          </span>
+                          <ChevronRight className="h-4 w-4 text-neutral-300 group-hover:text-neutral-500 transition-colors" />
+                        </div>
+                      </Link>
+                    ) : (
+                      <div className="flex items-center justify-between p-2">
+                        <div className="flex items-center gap-2">
+                          <Avatar className="h-8 w-8">
+                            <AvatarImage src={member.imageUrl} />
+                            <AvatarFallback>
+                              {member.name?.charAt(0) ?? "?"}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="text-sm font-medium">
+                            {member.name}
+                          </span>
+                        </div>
+                        <span className="font-semibold text-red-600">
+                          ${member.amount.toFixed(2)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
