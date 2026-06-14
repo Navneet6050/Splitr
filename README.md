@@ -10,13 +10,13 @@ Splitr utilizes a decoupled serverless-ready architecture optimized for scale, c
 
 ```mermaid
 graph TD
-    Client[Next.js Client Components] -->|dot-notation call| Proxy[Client-Side API Proxy Bridge]
-    Proxy -->|Dynamic Server Action Resolve| ServerActions[Next.js Server Actions / API Bridge]
-    ServerActions -->|Authentication Verification| Clerk[Clerk Auth / Identity]
-    ServerActions -->|Relational Queries| Prisma[Prisma ORM Client]
-    Prisma -->|Transaction Execution| Postgres[Neon DB / PostgreSQL]
-    Postgres -->|Async Trigger Events| Inngest[Inngest Serverless Queues]
-    Inngest -->|Notifications & Reports| Resend[Resend Mail Service]
+    Client["Next.js Client Components"] -->|dot-notation call| Proxy["Client-Side API Proxy Bridge"]
+    Proxy -->|Dynamic Server Action Resolve| ServerActions["Next.js Server Actions / API Bridge"]
+    ServerActions -->|Authentication Verification| Clerk["Clerk Auth / Identity"]
+    ServerActions -->|Relational Queries| Prisma["Prisma ORM Client"]
+    Prisma -->|Transaction Execution| Postgres["Neon DB / PostgreSQL"]
+    Postgres -->|Async Trigger Events| Inngest["Inngest Serverless Queues"]
+    Inngest -->|Notifications & Reports| Resend["Resend Mail Service"]
 ```
 
 ### Key Architectural Layers
@@ -63,10 +63,10 @@ One of Splitr's key engines is the `/import` workflow, designed to clean, normal
 
 ```mermaid
 sequenceDiagram
-    actor User as User Agent
-    participant SV as Client Import Page
-    participant SA as Imports Server Action
-    database DB as PostgreSQL (Neon)
+    actor User as "User Agent"
+    participant SV as "Client Import Page"
+    participant SA as "Imports Server Action"
+    database DB as "PostgreSQL (Neon)"
 
     User->>SV: Upload CSV File
     SV->>SA: create({ groupId, csvText, fileName })
