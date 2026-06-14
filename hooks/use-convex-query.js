@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { useUser, SignedIn, SignedOut } from "@clerk/nextjs";
 
@@ -20,7 +20,7 @@ export const useConvexQuery = (queryRef, args) => {
 
   useEffect(() => {
     if (!isLoaded) return;
-    if (queryRef === "skip") {
+    if (queryRef === "skip" || args === "skip") {
       setIsLoading(false);
       setData(undefined);
       return;
@@ -64,7 +64,7 @@ export const useConvexMutation = (mutationRef) => {
 
   const mutationName = typeof mutationRef === "string" ? mutationRef : mutationRef?._path || String(mutationRef);
 
-  const mutate = async (args) => {
+  const mutate = useCallback(async (args) => {
     setIsLoading(true);
     setError(null);
 
@@ -80,7 +80,7 @@ export const useConvexMutation = (mutationRef) => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [mutationName]);
 
   return { mutate, data, isLoading, error };
 };
